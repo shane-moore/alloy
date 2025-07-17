@@ -31,19 +31,51 @@ pub struct Header {
     /// be transferred; formally Hc.
     #[cfg_attr(feature = "serde", serde(rename = "miner", alias = "beneficiary"))]
     pub beneficiary: Address,
+    /// The Keccak 256-bit hash of the root node of the previous block's state trie, after all
+    /// transactions are executed and finalisations applied, per EIP-7886. This is the state root
+    /// before executing transactions in the current block.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub pre_state_root: Option<B256>,
+    /// The Keccak 256-bit hash of the root node of the previous block's trie structure populated
+    /// with each transaction in the transactions list portion of the block, per EIP-7886.
+    /// Formerly was `transactions_root` in pre-EIP-7886 headers.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub parent_transactions_root: Option<B256>,
+    /// The Keccak 256-bit hash of the root node of the previous block's trie structure populated
+    /// with the receipts of each transaction in the transactions list portion of the block, per
+    /// EIP-7886. Formerly was `receipts_root` in pre-EIP-7886 headers.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub parent_receipts_root: Option<B256>,
+    /// The Bloom filter composed from indexable information (logger address and log topics)
+    /// contained in each log entry from the receipt of each transaction in the transactions list
+    /// of the previous block, per EIP-7886.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub parent_logs_bloom: Option<Bloom>,
+    /// The Keccak 256-bit hash of the an RLP encoded list with each
+    /// [EIP-7685] request in the block body of the previous block, per EIP-7886.
+    /// [EIP-7685]: https://eips.ethereum.org/EIPS/eip-7685.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub parent_requests_hash: Option<B256>,
+    /// Indicates whether the execution of the previous block was reverted, per EIP-7886.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub parent_execution_reverted: Option<bool>,
     /// The Keccak 256-bit hash of the root node of the state trie, after all transactions are
     /// executed and finalisations applied; formally Hr.
-    pub state_root: B256,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub state_root: Option<B256>,
     /// The Keccak 256-bit hash of the root node of the trie structure populated with each
     /// transaction in the transactions list portion of the block; formally Ht.
-    pub transactions_root: B256,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub transactions_root: Option<B256>,
     /// The Keccak 256-bit hash of the root node of the trie structure populated with the receipts
     /// of each transaction in the transactions list portion of the block; formally He.
-    pub receipts_root: B256,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub receipts_root: Option<B256>,
     /// The Bloom filter composed from indexable information (logger address and log topics)
     /// contained in each log entry from the receipt of each transaction in the transactions list;
     /// formally Hb.
-    pub logs_bloom: Bloom,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub logs_bloom: Option<Bloom>,
     /// A scalar value corresponding to the difficulty level of this block. This can be calculated
     /// from the previous block’s difficulty level and the timestamp; formally Hd.
     pub difficulty: U256,
@@ -142,10 +174,20 @@ impl Default for Header {
             parent_hash: Default::default(),
             ommers_hash: EMPTY_OMMER_ROOT_HASH,
             beneficiary: Default::default(),
-            state_root: EMPTY_ROOT_HASH,
-            transactions_root: EMPTY_ROOT_HASH,
-            receipts_root: EMPTY_ROOT_HASH,
-            logs_bloom: Default::default(),
+
+            // ── EIP-7886 additions: all absent in a legacy header ──────────
+            pre_state_root: None,
+            parent_transactions_root: None,
+            parent_receipts_root: None,
+            parent_logs_bloom: None,
+            parent_requests_hash: None,
+            parent_execution_reverted: None,
+
+            // ── legacy roots ───────────────────────────────────────────────
+            state_root: Some(EMPTY_ROOT_HASH),
+            transactions_root: Some(EMPTY_ROOT_HASH),
+            receipts_root: Some(EMPTY_ROOT_HASH),
+            logs_bloom: Some(Default::default()),
             difficulty: Default::default(),
             number: 0,
             gas_limit: 0,
@@ -192,7 +234,7 @@ impl Header {
 
     /// Check if the transaction root equals to empty root.
     pub fn transaction_root_is_empty(&self) -> bool {
-        self.transactions_root == EMPTY_ROOT_HASH
+        self.transactions_root == Some(EMPTY_ROOT_HASH)
     }
 
     /// Returns the blob fee for _this_ block according to the EIP-4844 spec.
@@ -237,11 +279,11 @@ impl Header {
         mem::size_of::<B256>() + // parent hash
         mem::size_of::<B256>() + // ommers hash
         mem::size_of::<Address>() + // beneficiary
-        mem::size_of::<B256>() + // state root
-        mem::size_of::<B256>() + // transactions root
-        mem::size_of::<B256>() + // receipts root
+         mem::size_of::<Option<B256>>() + // state root
+         mem::size_of::<Option<B256>>() + // transactions root
+         mem::size_of::<Option<B256>>() + // receipts root
         mem::size_of::<Option<B256>>() + // withdrawals root
-        mem::size_of::<Bloom>() + // logs bloom
+         mem::size_of::<Option<B256>>() + // logs bloom
         mem::size_of::<U256>() + // difficulty
         mem::size_of::<BlockNumber>() + // number
         mem::size_of::<u128>() + // gas limit
@@ -254,6 +296,13 @@ impl Header {
         mem::size_of::<Option<u128>>() + // excess blob gas
         mem::size_of::<Option<B256>>() + // parent beacon block root
         mem::size_of::<Option<B256>>() + // requests root
+        // ── new EIP-7886 fields ────────────────────────────────────────────────
+        mem::size_of::<Option<B256>>() + // pre_state_root
+        mem::size_of::<Option<B256>>() + // parent_transactions_root
+        mem::size_of::<Option<B256>>() + // parent_receipts_root
+        mem::size_of::<Option<Bloom>>() + // parent_logs_bloom
+        mem::size_of::<Option<B256>>() + // parent_requests_hash
+        mem::size_of::<Option<bool>>() + // parent_execution_reverted
         self.extra_data.len() // extra data
     }
 
@@ -262,10 +311,46 @@ impl Header {
         length += self.parent_hash.length();
         length += self.ommers_hash.length();
         length += self.beneficiary.length();
-        length += self.state_root.length();
-        length += self.transactions_root.length();
-        length += self.receipts_root.length();
-        length += self.logs_bloom.length();
+
+        // pre-EIP-7886 fields
+        if let Some(state_root) = self.state_root {
+            length += state_root.length();
+        }
+
+        if let Some(transactions_root) = self.transactions_root {
+            length += transactions_root.length();
+        }
+
+        if let Some(receipts_root) = self.receipts_root {
+            length += receipts_root.length();
+        }
+
+        if let Some(logs_bloom) = self.logs_bloom {
+            length += logs_bloom.length();
+        }
+
+        // Encode EIP-7886 fields first (right after ommers_hash)
+        if let Some(ref pre_state_root) = self.pre_state_root {
+            length += pre_state_root.length();
+        }
+        if let Some(ref parent_transactions_root) = self.parent_transactions_root {
+            length += parent_transactions_root.length();
+        }
+        if let Some(ref parent_receipts_root) = self.parent_receipts_root {
+            length += parent_receipts_root.length();
+        }
+        if let Some(ref parent_logs_bloom) = self.parent_logs_bloom {
+            length += parent_logs_bloom.length();
+        }
+        if let Some(ref parent_requests_hash) = self.parent_requests_hash {
+            length += parent_requests_hash.length();
+        }
+        if let Some(parent_execution_reverted) = self.parent_execution_reverted {
+            // Encode the boolean as 0 / 1 using U256 to stay consistent with the
+            // length-calculation.
+            length += U256::from(parent_execution_reverted as u8).length();
+        }
+
         length += self.difficulty.length();
         length += U256::from(self.number).length();
         length += U256::from(self.gas_limit).length();
@@ -355,6 +440,13 @@ impl Header {
     pub const fn prague_active(&self) -> bool {
         self.requests_hash.is_some()
     }
+
+    /// True if the EIP-7886 hardfork is active
+    ///
+    /// This function checks if the pre_state_root field is present.
+    pub const fn eip7886_active(&self) -> bool {
+        self.pre_state_root.is_some()
+    }
 }
 
 impl Encodable for Header {
@@ -365,10 +457,43 @@ impl Encodable for Header {
         self.parent_hash.encode(out);
         self.ommers_hash.encode(out);
         self.beneficiary.encode(out);
-        self.state_root.encode(out);
-        self.transactions_root.encode(out);
-        self.receipts_root.encode(out);
-        self.logs_bloom.encode(out);
+
+        // Encode all the pre-EIP-7886 fields
+        if let Some(ref state_root) = self.state_root {
+            state_root.encode(out);
+        }
+        if let Some(ref transactions_root) = self.transactions_root {
+            transactions_root.encode(out);
+        }
+        if let Some(ref receipts_root) = self.receipts_root {
+            receipts_root.encode(out);
+        }
+        if let Some(ref logs_bloom) = self.logs_bloom {
+            logs_bloom.encode(out);
+        }
+
+        // Encode EIP-7886 fields first (right after ommers_hash)
+        if let Some(ref pre_state_root) = self.pre_state_root {
+            pre_state_root.encode(out);
+        }
+        if let Some(ref parent_transactions_root) = self.parent_transactions_root {
+            parent_transactions_root.encode(out);
+        }
+        if let Some(ref parent_receipts_root) = self.parent_receipts_root {
+            parent_receipts_root.encode(out);
+        }
+        if let Some(ref parent_logs_bloom) = self.parent_logs_bloom {
+            parent_logs_bloom.encode(out);
+        }
+        if let Some(ref parent_requests_hash) = self.parent_requests_hash {
+            parent_requests_hash.encode(out);
+        }
+        if let Some(parent_execution_reverted) = self.parent_execution_reverted {
+            // Encode the boolean as 0 / 1 using U256 to stay consistent with the
+            // length-calculation.
+            U256::from(parent_execution_reverted as u8).encode(out);
+        }
+
         self.difficulty.encode(out);
         U256::from(self.number).encode(out);
         U256::from(self.gas_limit).encode(out);
@@ -414,70 +539,168 @@ impl Encodable for Header {
 
 impl Decodable for Header {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        let rlp_head = alloy_rlp::Header::decode(buf)?;
-        if !rlp_head.list {
-            return Err(alloy_rlp::Error::UnexpectedString);
-        }
-        let started_len = buf.len();
-        let mut this = Self {
-            parent_hash: Decodable::decode(buf)?,
-            ommers_hash: Decodable::decode(buf)?,
-            beneficiary: Decodable::decode(buf)?,
-            state_root: Decodable::decode(buf)?,
-            transactions_root: Decodable::decode(buf)?,
-            receipts_root: Decodable::decode(buf)?,
-            logs_bloom: Decodable::decode(buf)?,
-            difficulty: Decodable::decode(buf)?,
-            number: u64::decode(buf)?,
-            gas_limit: u64::decode(buf)?,
-            gas_used: u64::decode(buf)?,
-            timestamp: Decodable::decode(buf)?,
-            extra_data: Decodable::decode(buf)?,
-            mix_hash: Decodable::decode(buf)?,
-            nonce: B64::decode(buf)?,
-            base_fee_per_gas: None,
-            withdrawals_root: None,
-            blob_gas_used: None,
-            excess_blob_gas: None,
-            parent_beacon_block_root: None,
-            requests_hash: None,
-        };
-        if started_len - buf.len() < rlp_head.payload_length {
-            this.base_fee_per_gas = Some(u64::decode(buf)?);
+        // helper that does the actual field-by-field decoding
+        fn parse_header(
+            buf: &mut &[u8],
+            read_legacy: bool,
+            read_eip7886: bool,
+        ) -> alloy_rlp::Result<Header> {
+            let rlp_head = alloy_rlp::Header::decode(buf)?;
+            if !rlp_head.list {
+                return Err(alloy_rlp::Error::UnexpectedString);
+            }
+            let started_len = buf.len();
+
+            // fixed prefix
+            let parent_hash: B256 = Decodable::decode(buf)?;
+            let ommers_hash: B256 = Decodable::decode(buf)?;
+            let beneficiary: Address = Decodable::decode(buf)?;
+
+            // optional pre-EIP-7886 legacy fields
+            let mut state_root = None;
+            let mut transactions_root = None;
+            let mut receipts_root = None;
+            let mut logs_bloom = None;
+
+            if read_legacy && started_len - buf.len() < rlp_head.payload_length {
+                state_root = Some(Decodable::decode(buf)?);
+            }
+            if read_legacy && started_len - buf.len() < rlp_head.payload_length {
+                transactions_root = Some(Decodable::decode(buf)?);
+            }
+            if read_legacy && started_len - buf.len() < rlp_head.payload_length {
+                receipts_root = Some(Decodable::decode(buf)?);
+            }
+            if read_legacy && started_len - buf.len() < rlp_head.payload_length {
+                logs_bloom = Some(Decodable::decode(buf)?);
+            }
+
+            // EIP-7886 optional fields
+            let mut pre_state_root = None;
+            let mut parent_transactions_root = None;
+            let mut parent_receipts_root = None;
+            let mut parent_logs_bloom = None;
+            let mut parent_requests_hash = None;
+            let mut parent_execution_reverted = None;
+
+            if read_eip7886 && started_len - buf.len() < rlp_head.payload_length {
+                pre_state_root = Some(Decodable::decode(buf)?);
+            }
+            if read_eip7886 && started_len - buf.len() < rlp_head.payload_length {
+                parent_transactions_root = Some(Decodable::decode(buf)?);
+            }
+            if read_eip7886 && started_len - buf.len() < rlp_head.payload_length {
+                parent_receipts_root = Some(Decodable::decode(buf)?);
+            }
+            if read_eip7886 && started_len - buf.len() < rlp_head.payload_length {
+                parent_logs_bloom = Some(Decodable::decode(buf)?);
+            }
+            if read_eip7886 && started_len - buf.len() < rlp_head.payload_length {
+                parent_requests_hash = Some(B256::decode(buf)?);
+            }
+            if read_eip7886 && started_len - buf.len() < rlp_head.payload_length {
+                let flag: U256 = Decodable::decode(buf)?;
+                parent_execution_reverted = Some(!flag.is_zero());
+            }
+
+            // mandatory core & fork fields
+            let difficulty: U256 = Decodable::decode(buf)?;
+            let number: u64 = u64::decode(buf)?;
+            let gas_limit: u64 = u64::decode(buf)?;
+            let gas_used: u64 = u64::decode(buf)?;
+            let timestamp: u64 = u64::decode(buf)?;
+            let extra_data: Bytes = Decodable::decode(buf)?;
+            let mix_hash: B256 = Decodable::decode(buf)?;
+            let nonce: B64 = B64::decode(buf)?;
+
+            let mut base_fee_per_gas = None;
+            let mut withdrawals_root = None;
+            let mut blob_gas_used = None;
+            let mut excess_blob_gas = None;
+            let mut parent_beacon_block_root = None;
+            let mut requests_hash = None;
+
+            if started_len - buf.len() < rlp_head.payload_length {
+                base_fee_per_gas = Some(u64::decode(buf)?);
+            }
+            if started_len - buf.len() < rlp_head.payload_length {
+                withdrawals_root = Some(Decodable::decode(buf)?);
+            }
+            if started_len - buf.len() < rlp_head.payload_length {
+                blob_gas_used = Some(u64::decode(buf)?);
+            }
+            if started_len - buf.len() < rlp_head.payload_length {
+                excess_blob_gas = Some(u64::decode(buf)?);
+            }
+            if started_len - buf.len() < rlp_head.payload_length {
+                parent_beacon_block_root = Some(B256::decode(buf)?);
+            }
+            if started_len - buf.len() < rlp_head.payload_length {
+                requests_hash = Some(B256::decode(buf)?);
+            }
+
+            // final length check
+            if started_len - buf.len() != rlp_head.payload_length {
+                return Err(alloy_rlp::Error::UnexpectedLength);
+            }
+
+            Ok(Header {
+                parent_hash,
+                ommers_hash,
+                beneficiary,
+                // legacy
+                state_root,
+                transactions_root,
+                receipts_root,
+                logs_bloom,
+                // EIP-7886
+                pre_state_root,
+                parent_transactions_root,
+                parent_receipts_root,
+                parent_logs_bloom,
+                parent_requests_hash,
+                parent_execution_reverted,
+                // core
+                difficulty,
+                number,
+                gas_limit,
+                gas_used,
+                timestamp,
+                extra_data,
+                mix_hash,
+                nonce,
+                // fork extras
+                base_fee_per_gas,
+                withdrawals_root,
+                blob_gas_used,
+                excess_blob_gas,
+                parent_beacon_block_root,
+                requests_hash,
+            })
         }
 
-        // Withdrawals root for post-shanghai headers
-        if started_len - buf.len() < rlp_head.payload_length {
-            this.withdrawals_root = Some(Decodable::decode(buf)?);
-        }
+        let original_buf = *buf;
 
-        // Blob gas used and excess blob gas for post-cancun headers
-        if started_len - buf.len() < rlp_head.payload_length {
-            this.blob_gas_used = Some(u64::decode(buf)?);
-        }
-
-        if started_len - buf.len() < rlp_head.payload_length {
-            this.excess_blob_gas = Some(u64::decode(buf)?);
-        }
-
-        // Decode parent beacon block root.
-        if started_len - buf.len() < rlp_head.payload_length {
-            this.parent_beacon_block_root = Some(B256::decode(buf)?);
-        }
-
-        // Decode requests hash.
-        if started_len - buf.len() < rlp_head.payload_length {
-            this.requests_hash = Some(B256::decode(buf)?);
-        }
-
-        let consumed = started_len - buf.len();
-        if consumed != rlp_head.payload_length {
-            return Err(alloy_rlp::Error::ListLengthMismatch {
-                expected: rlp_head.payload_length,
-                got: consumed,
-            });
-        }
-        Ok(this)
+        // Attempt to parse as a post-EIP-7886 header first.
+        let mut eip7886_buf = original_buf;
+        parse_header(&mut eip7886_buf, /* read_legacy */ false, /* read_eip7886 */ true)
+            .and_then(|header| {
+                // If successful, commit the buffer advancement.
+                *buf = eip7886_buf;
+                Ok(header)
+            })
+            .or_else(|_err| {
+                // If it failed, rewind and try parsing as a legacy header.
+                let mut legacy_buf = original_buf;
+                let header = parse_header(
+                    &mut legacy_buf,
+                    /* read_legacy */ true,
+                    /* read_eip7886 */ false,
+                )?;
+                // If successful, commit the buffer advancement.
+                *buf = legacy_buf;
+                Ok(header)
+            })
     }
 }
 
@@ -528,10 +751,21 @@ impl<'a> arbitrary::Arbitrary<'a> for Header {
             parent_hash: u.arbitrary()?,
             ommers_hash: u.arbitrary()?,
             beneficiary: u.arbitrary()?,
+
+            // pre-EIP-7886 fields
             state_root: u.arbitrary()?,
             transactions_root: u.arbitrary()?,
             receipts_root: u.arbitrary()?,
             logs_bloom: u.arbitrary()?,
+
+            // EIP-7886 fields
+            pre_state_root: u.arbitrary()?,
+            parent_transactions_root: u.arbitrary()?,
+            parent_receipts_root: u.arbitrary()?,
+            parent_logs_bloom: u.arbitrary()?,
+            parent_requests_hash: u.arbitrary()?,
+            parent_execution_reverted: u.arbitrary()?,
+
             difficulty: u.arbitrary()?,
             number: u.arbitrary()?,
             gas_limit: u.arbitrary()?,
@@ -570,20 +804,38 @@ pub trait BlockHeader {
     /// Retrieves the beneficiary (miner) of the block
     fn beneficiary(&self) -> Address;
 
-    /// Retrieves the state root hash of the block
-    fn state_root(&self) -> B256;
+    /// Retrieves the state root hash of the block, if available
+    fn state_root(&self) -> Option<B256>;
 
-    /// Retrieves the transactions root hash of the block
-    fn transactions_root(&self) -> B256;
+    /// Retrieves the transactions root hash of the block, if available
+    fn transactions_root(&self) -> Option<B256>;
 
-    /// Retrieves the receipts root hash of the block
-    fn receipts_root(&self) -> B256;
+    /// Retrieves the receipts root hash of the block, if available
+    fn receipts_root(&self) -> Option<B256>;
 
     /// Retrieves the withdrawals root hash of the block, if available
     fn withdrawals_root(&self) -> Option<B256>;
 
-    /// Retrieves the logs bloom filter of the block
-    fn logs_bloom(&self) -> Bloom;
+    /// Retrieves the logs bloom filter of the block, if available
+    fn logs_bloom(&self) -> Option<Bloom>;
+
+    /// Retrieves the pre-state root of the block, if available
+    fn pre_state_root(&self) -> Option<B256>;
+
+    /// Retrieves the parent transactions root of the block, if available
+    fn parent_transactions_root(&self) -> Option<B256>;
+
+    /// Retrieves the parent receipts root of the block, if available
+    fn parent_receipts_root(&self) -> Option<B256>;
+
+    /// Retrieves the parent logs bloom of the block, if available
+    fn parent_logs_bloom(&self) -> Option<Bloom>;
+
+    /// Retrieves the parent requests hash of the block, if available
+    fn parent_requests_hash(&self) -> Option<B256>;
+
+    /// Retrieves whether the parent execution was reverted, if available
+    fn parent_execution_reverted(&self) -> Option<bool>;
 
     /// Retrieves the difficulty of the block
     fn difficulty(&self) -> U256;
@@ -685,7 +937,7 @@ pub trait BlockHeader {
 
     /// Checks if the header is considered empty - has no transactions, no ommers or withdrawals
     fn is_empty(&self) -> bool {
-        let txs_and_ommers_empty = self.transactions_root() == EMPTY_ROOT_HASH
+        let txs_and_ommers_empty = self.transactions_root() == Some(EMPTY_ROOT_HASH)
             && self.ommers_hash() == EMPTY_OMMER_ROOT_HASH;
         self.withdrawals_root().map_or(txs_and_ommers_empty, |withdrawals_root| {
             txs_and_ommers_empty && withdrawals_root == EMPTY_ROOT_HASH
@@ -735,15 +987,15 @@ impl BlockHeader for Header {
         self.beneficiary
     }
 
-    fn state_root(&self) -> B256 {
+    fn state_root(&self) -> Option<B256> {
         self.state_root
     }
 
-    fn transactions_root(&self) -> B256 {
+    fn transactions_root(&self) -> Option<B256> {
         self.transactions_root
     }
 
-    fn receipts_root(&self) -> B256 {
+    fn receipts_root(&self) -> Option<B256> {
         self.receipts_root
     }
 
@@ -751,8 +1003,32 @@ impl BlockHeader for Header {
         self.withdrawals_root
     }
 
-    fn logs_bloom(&self) -> Bloom {
+    fn logs_bloom(&self) -> Option<Bloom> {
         self.logs_bloom
+    }
+
+    fn pre_state_root(&self) -> Option<B256> {
+        self.pre_state_root
+    }
+
+    fn parent_transactions_root(&self) -> Option<B256> {
+        self.parent_transactions_root
+    }
+
+    fn parent_receipts_root(&self) -> Option<B256> {
+        self.parent_receipts_root
+    }
+
+    fn parent_logs_bloom(&self) -> Option<Bloom> {
+        self.parent_logs_bloom
+    }
+
+    fn parent_requests_hash(&self) -> Option<B256> {
+        self.parent_requests_hash
+    }
+
+    fn parent_execution_reverted(&self) -> Option<bool> {
+        self.parent_execution_reverted
     }
 
     fn difficulty(&self) -> U256 {
@@ -822,15 +1098,15 @@ impl<T: BlockHeader> BlockHeader for alloy_serde::WithOtherFields<T> {
         self.inner.beneficiary()
     }
 
-    fn state_root(&self) -> B256 {
+    fn state_root(&self) -> Option<B256> {
         self.inner.state_root()
     }
 
-    fn transactions_root(&self) -> B256 {
+    fn transactions_root(&self) -> Option<B256> {
         self.inner.transactions_root()
     }
 
-    fn receipts_root(&self) -> B256 {
+    fn receipts_root(&self) -> Option<B256> {
         self.inner.receipts_root()
     }
 
@@ -838,7 +1114,7 @@ impl<T: BlockHeader> BlockHeader for alloy_serde::WithOtherFields<T> {
         self.inner.withdrawals_root()
     }
 
-    fn logs_bloom(&self) -> Bloom {
+    fn logs_bloom(&self) -> Option<Bloom> {
         self.inner.logs_bloom()
     }
 
@@ -897,6 +1173,30 @@ impl<T: BlockHeader> BlockHeader for alloy_serde::WithOtherFields<T> {
     fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
+
+    fn pre_state_root(&self) -> Option<B256> {
+        self.inner.pre_state_root()
+    }
+
+    fn parent_transactions_root(&self) -> Option<B256> {
+        self.inner.parent_transactions_root()
+    }
+
+    fn parent_receipts_root(&self) -> Option<B256> {
+        self.inner.parent_receipts_root()
+    }
+
+    fn parent_logs_bloom(&self) -> Option<Bloom> {
+        self.inner.parent_logs_bloom()
+    }
+
+    fn parent_requests_hash(&self) -> Option<B256> {
+        self.inner.parent_requests_hash()
+    }
+
+    fn parent_execution_reverted(&self) -> Option<bool> {
+        self.inner.parent_execution_reverted()
+    }
 }
 
 /// Bincode-compatible [`Header`] serde implementation.
@@ -927,12 +1227,28 @@ pub(crate) mod serde_bincode_compat {
         parent_hash: B256,
         ommers_hash: B256,
         beneficiary: Address,
-        state_root: B256,
-        transactions_root: B256,
-        receipts_root: B256,
+        #[serde(default)]
+        state_root: Option<B256>,
+        #[serde(default)]
+        transactions_root: Option<B256>,
+        #[serde(default)]
+        receipts_root: Option<B256>,
         #[serde(default)]
         withdrawals_root: Option<B256>,
-        logs_bloom: Bloom,
+        #[serde(default)]
+        logs_bloom: Option<Bloom>,
+        #[serde(default)]
+        pre_state_root: Option<B256>,
+        #[serde(default)]
+        parent_transactions_root: Option<B256>,
+        #[serde(default)]
+        parent_receipts_root: Option<B256>,
+        #[serde(default)]
+        parent_logs_bloom: Option<Bloom>,
+        #[serde(default)]
+        parent_requests_hash: Option<B256>,
+        #[serde(default)]
+        parent_execution_reverted: Option<bool>,
         difficulty: U256,
         number: BlockNumber,
         gas_limit: u64,
@@ -959,11 +1275,22 @@ pub(crate) mod serde_bincode_compat {
                 parent_hash: value.parent_hash,
                 ommers_hash: value.ommers_hash,
                 beneficiary: value.beneficiary,
+
+                // pre-EIP-7886 fields
                 state_root: value.state_root,
                 transactions_root: value.transactions_root,
                 receipts_root: value.receipts_root,
                 withdrawals_root: value.withdrawals_root,
                 logs_bloom: value.logs_bloom,
+
+                // EIP-7886 fields
+                pre_state_root: value.pre_state_root,
+                parent_transactions_root: value.parent_transactions_root,
+                parent_receipts_root: value.parent_receipts_root,
+                parent_logs_bloom: value.parent_logs_bloom,
+                parent_requests_hash: value.parent_requests_hash,
+                parent_execution_reverted: value.parent_execution_reverted,
+
                 difficulty: value.difficulty,
                 number: value.number,
                 gas_limit: value.gas_limit,
@@ -987,11 +1314,21 @@ pub(crate) mod serde_bincode_compat {
                 parent_hash: value.parent_hash,
                 ommers_hash: value.ommers_hash,
                 beneficiary: value.beneficiary,
+
+                // pre-EIP-7886 fields
                 state_root: value.state_root,
                 transactions_root: value.transactions_root,
                 receipts_root: value.receipts_root,
                 withdrawals_root: value.withdrawals_root,
                 logs_bloom: value.logs_bloom,
+
+                // EIP-7886 fields
+                pre_state_root: value.pre_state_root,
+                parent_transactions_root: value.parent_transactions_root,
+                parent_receipts_root: value.parent_receipts_root,
+                parent_logs_bloom: value.parent_logs_bloom,
+                parent_requests_hash: value.parent_requests_hash,
+                parent_execution_reverted: value.parent_execution_reverted,
                 difficulty: value.difficulty,
                 number: value.number,
                 gas_limit: value.gas_limit,
@@ -1062,11 +1399,12 @@ pub(crate) mod serde_bincode_compat {
 #[cfg(all(test, feature = "serde"))]
 mod tests {
     use super::*;
-    use alloy_primitives::b256;
+    use alloy_primitives::{b256, hex};
 
     #[test]
     fn test_header_serde_json_roundtrip() {
-        let raw = r#"{"parentHash":"0x0000000000000000000000000000000000000000000000000000000000000000","sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","miner":"0x0000000000000000000000000000000000000000","stateRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","transactionsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","difficulty":"0x0","number":"0x0","gasLimit":"0x0","gasUsed":"0x0","timestamp":"0x0","extraData":"0x","mixHash":"0x0000000000000000000000000000000000000000000000000000000000000000","nonce":"0x0000000000000000","baseFeePerGas":"0x1","withdrawalsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"}"#;
+        let raw = "{\"parentHash\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"sha3Uncles\":\"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347\",\"miner\":\"0x0000000000000000000000000000000000000000\",\"stateRoot\":\"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\",\"transactionsRoot\":\"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\",\"receiptsRoot\":\"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\",\"logsBloom\":\"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\",\"difficulty\":\"0x0\",\"number\":\"0x0\",\"gasLimit\":\"0x0\",\"gasUsed\":\"0x0\",\"timestamp\":\"0x0\",\"extraData\":\"0x\",\"mixHash\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"nonce\":\"0x0000000000000000\",\"baseFeePerGas\":\"0x1\",\"withdrawalsRoot\":\"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\"}";
+
         let header = Header {
             base_fee_per_gas: Some(1),
             withdrawals_root: Some(EMPTY_ROOT_HASH),
@@ -1075,7 +1413,15 @@ mod tests {
 
         let encoded = serde_json::to_string(&header).unwrap();
         assert_eq!(encoded, raw);
+        println!("encoded-json len      = {}", encoded.len());
 
+        let bloom_hex = &raw[raw.find("\"logsBloom\":").unwrap() + 13..] // after 0x
+            .split('"')
+            .next()
+            .unwrap();
+        println!("hard-coded bloom hex-digits = {}", bloom_hex.len()); // expect 1024
+
+        // ...existing code...
         let decoded: Header = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, header);
 
@@ -1084,9 +1430,15 @@ mod tests {
 
         // Encode the header data
         decoded.encode(&mut encoded_rlp);
+        println!("encoded-rlp bytes len = {}", encoded_rlp.len());
 
-        // Decode the RLP data
-        let decoded_rlp = Header::decode(&mut encoded_rlp.as_slice()).unwrap();
+        let decoded_rlp = match Header::decode(&mut encoded_rlp.as_slice()) {
+            Ok(h) => h,
+            Err(e) => {
+                println!("RLP decode error: {:?}", e);
+                panic!("failed to decode RLP");
+            }
+        };
 
         // Check that the decoded RLP data matches the original header data
         assert_eq!(decoded_rlp, decoded);
@@ -1097,12 +1449,86 @@ mod tests {
         // Note: Some fields are renamed from eth_getHeaderByHash
         let raw = r#"{"baseFeePerGas":"0x7","blobGasUsed":"0x20000","difficulty":"0x0","excessBlobGas":"0x40000","extraData":"0xd883010e0c846765746888676f312e32332e32856c696e7578","gasLimit":"0x1c9c380","gasUsed":"0x5208","hash":"0x661da523f3e44725f3a1cee38183d35424155a05674609a9f6ed81243adf9e26","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","miner":"0xf97e180c050e5ab072211ad2c213eb5aee4df134","mixHash":"0xe6d9c084dd36560520d5776a5387a82fb44793c9cd1b69afb61d53af29ee64b0","nonce":"0x0000000000000000","number":"0x315","parentBeaconBlockRoot":"0xd0bdb48ab45028568e66c8ddd600ac4c2a52522714bbfbf00ea6d20ba40f3ae2","parentHash":"0x60f1563d2c572116091a4b91421d8d972118e39604d23455d841f9431cea4b6a","receiptsRoot":"0xeaa8c40899a61ae59615cf9985f5e2194f8fd2b57d273be63bde6733e89b12ab","requestsHash":"0x6036c41849da9c076ed79654d434017387a88fb833c2856b32e18218b3341c5f","sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","stateRoot":"0x8101d88f2761eb9849634740f92fe09735551ad5a4d5e9da9bcae1ef4726a475","timestamp":"0x6712ba6e","transactionsRoot":"0xf543eb3d405d2d6320344d348b06703ff1abeef71288181a24061e53f89bb5ef","withdrawalsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"}
 "#;
+
+        // helper: should print 1024
+        println!(
+            "{}",
+            &raw[raw.find("\"logsBloom\":").unwrap() + 13..] // jump after `"logsBloom":"0x`
+                .split('"')
+                .next()
+                .unwrap() // take only the hex
+                .len()
+        );
+        println!("hi");
+
         let header = serde_json::from_str::<Header>(raw).unwrap();
+
+        println!("{:#?}", header);
         let hash = header.hash_slow();
         assert_eq!(hash, b256!("661da523f3e44725f3a1cee38183d35424155a05674609a9f6ed81243adf9e26"));
+    }
+
+    /// Round-trip JSON + RLP for a “pure” post-EIP-7886 header.
+    #[test]
+    fn serde_rlp_eip7886_roundtrip() {
+        // build a minimal post-EIP-7886 header
+        let header = Header {
+            state_root: None,
+            transactions_root: None,
+            receipts_root: None,
+            logs_bloom: None,
+            pre_state_root: Some(EMPTY_ROOT_HASH),
+            parent_transactions_root: Some(EMPTY_ROOT_HASH),
+            parent_receipts_root: Some(EMPTY_ROOT_HASH),
+            parent_logs_bloom: Some(Default::default()),
+            parent_requests_hash: Some(EMPTY_ROOT_HASH),
+            parent_execution_reverted: Some(true),
+            // everything else default
+            ..Header::default()
+        };
+        assert!(header.eip7886_active());
+        println!("{:#?}", header);
+        println!("EIP-7886 active: {}", header.eip7886_active());
+
+        // JSON
+        let json = serde_json::to_string(&header).unwrap();
+        let de: Header = serde_json::from_str(&json).unwrap();
+        assert_eq!(de, header);
+        println!("JSON: {}", json);
+
+        // RLP
         let mut v = Vec::new();
         header.encode(&mut v);
         let decoded = Header::decode(&mut v.as_slice()).unwrap();
         assert_eq!(decoded, header);
+    }
+
+    /// The `parent_execution_reverted` flag must be encoded as 0 / 1.
+    #[test]
+    fn parent_execution_reverted_rlp_encoding() {
+        let roundtrip = |flag: bool| {
+            let h = Header {
+                // EIP-7886 fields - all present in a proper EIP-7886 header
+                pre_state_root: Some(EMPTY_ROOT_HASH),
+                parent_transactions_root: Some(EMPTY_ROOT_HASH),
+                parent_receipts_root: Some(EMPTY_ROOT_HASH),
+                parent_logs_bloom: Some(Default::default()),
+                parent_requests_hash: Some(EMPTY_ROOT_HASH),
+                parent_execution_reverted: Some(flag),
+                // Legacy fields should be None in EIP-7886
+                state_root: None,
+                transactions_root: None,
+                receipts_root: None,
+                logs_bloom: None,
+                ..Header::default()
+            };
+            let mut bytes = Vec::new();
+            h.encode(&mut bytes);
+            let decoded = Header::decode(&mut bytes.as_slice()).unwrap();
+            assert_eq!(decoded.parent_execution_reverted, Some(flag));
+        };
+
+        roundtrip(true);
+        roundtrip(false);
     }
 }
